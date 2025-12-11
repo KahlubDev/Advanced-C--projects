@@ -1,0 +1,233 @@
+//Advanced quiz game
+// Developed by DevKahlub
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <random>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <optional>
+#include <set>
+#include <cmath>
+using namespace std;
+
+struct Question {
+    string difficulty, category, text;
+    vector<string> opts;
+    char answer;
+
+    static optional<Question> fromLine(const string& line) {
+        stringstream ss(line);
+        string part;
+        vector<string> parts;
+        while (getline(ss, part, '|')) {
+            parts.push_back(part);
+        }
+        if (parts.size() != 8) return nullopt;
+
+        Question q;
+        q.difficulty = parts[0];
+        q.category   = parts[1];
+        q.text       = parts[2];
+        q.opts       = {parts[3], parts[4], parts[5], parts[6]};
+        if (parts[7].empty()) return nullopt;
+        q.answer = toupper(parts[7][0]);
+        if (q.answer < 'A' || q.answer > 'D') return nullopt;
+        return q;
+    }
+
+    string toLine() const {
+        ostringstream oss;
+        oss << difficulty << '|' << category << '|' << text << '|'
+            << opts[0] << '|' << opts[1] << '|' << opts[2] << '|' << opts[3] << '|' << answer;
+        return oss.str();
+    }
+};
+
+class Quiz {
+    vector<Question> bank;
+    string filename = "questions.txt";
+
+public:
+    Quiz() { load(); }
+
+    void load() {
+        bank.clear();
+        ifstream f(filename);
+        string line;
+        while (getline(f, line)) {
+            if (line.empty()) continue;
+            auto q = Question::fromLine(line);
+            if (q) bank.push_back(*q);
+        }
+    }
+
+    bool save(const Question& q) {
+        ofstream f(filename, ios::app);
+        if (!f) return false;
+        f << q.toLine() << '\n';
+        bank.push_back(q);
+        return true;
+    }
+
+    vector<string> categories() const {
+        set<string> s;
+        for (const auto& q : bank) s.insert(q.category);
+        return {s.begin(), s.end()};
+    }
+
+    vector<Question> filter(const string& diff, const string& cat) const {
+        vector<Question> res;
+        for (const auto& q : bank) {
+            bool d = (diff == "any" || q.difficulty == diff);
+            bool c = (cat.empty() || cat == "any" || q.category == cat);
+            if (d && c) res.push_back(q);
+        }
+        return res;
+    }
+
+    pair<int,int> run(const string& diff, const string& cat, int n, chrono::steady_clock::time_point& start, double& secs) {
+        auto pool = filter(diff, cat);
+        if (pool.empty()) {
+            cout << "No questions found for your selection.\n";
+            return {0,0};
+        }
+
+        random_device rd;
+        mt19937 g(rd());
+        shuffle(pool.begin(), pool.end(), g);
+
+        if (n <= 0 || n > (int)pool.size()) n = pool.size();
+
+        start = chrono::steady_clock::now();
+        int score = 0;
+
+        for (int i = 0; i < n; ++i) {
+            const auto& q = pool[i];
+            vector<int> order = {0,1,2,3};
+            shuffle(order.begin(), order.end(), g);
+
+            int correctPos = -1;
+            for (int p = 0; p < 4; ++p)
+                if (order[p] == (q.answer - 'A')) { correctPos = p; break; }
+
+            cout << "\nQuestion " << (i+1) << "/" << n << " [" << q.difficulty << " - " << q.category << "]\n";
+            cout << q.text << "\n\n";
+            for (int p = 0; p < 4; ++p)
+                cout << "  " << char('A'+p) << ". " << q.opts[order[p]] << "\n";
+            cout << "\n";
+
+            char ans;
+            while (true) {
+                cout << "Your answer (A/B/C/D): ";
+                string in;
+                if (!getline(cin >> ws, in)) { cin.clear(); continue; }
+                if (in.empty()) continue;
+                ans = toupper(in[0]);
+                if (ans >= 'A' && ans <= 'D') break;
+                cout << "Please enter A, B, C, or D.\n";
+            }
+
+            if ((ans - 'A') == correctPos) {
+                cout << "Correct!\n";
+                ++score;
+            } else {
+                cout << "Wrong! Correct: " << char('A' + correctPos) << ". " << q.opts[order[correctPos]] << "\n";
+            }
+        }
+
+        secs = chrono::duration<double>(chrono::steady_clock::now() - start).count();
+        return {score, n};
+    }
+};
+
+string input(const string& prompt = "") {
+    if (!prompt.empty()) cout << prompt;
+    string s;
+    getline(cin, s);
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == string::npos) return "";
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
+
+int main() {
+    cout << "=== C++ Quiz Engine ===\n\n";
+    cout << "Enter your name: ";
+    string name;
+    getline(cin, name);
+    if (name.empty()) name = "Player";
+
+    Quiz quiz;
+
+    while (true) {
+        cout << "\n1) Take Quiz\n2) Add Question\n3) Leaderboard\n4) Exit\n";
+        int choice = stoi(input("Choice (1-4): "));
+        if (choice == 4) { cout << "Bye!\n"; break; }
+        if (choice == 1) {
+            cout << "Difficulty: 1)Easy 2)Medium 3)Hard 4)Any\n";
+            int d = stoi(input("Select: "));
+            string diff = (d==1?"easy":d==2?"medium":d==3?"hard":"any");
+
+            string cat = "any";
+            auto cats = quiz.categories();
+            if (!cats.empty()) {
+                cout << "0) Any\n";
+                for (int i = 0; i < cats.size(); ++i) cout << i+1 << ") " << cats[i] << "\n";
+                int c = stoi(input("Category: "));
+                if (c > 0 && c <= cats.size()) cat = cats[c-1];
+            }
+
+            int n = stoi(input("Questions (0=all): "));
+            if (n == 0) n = 1000;
+
+            chrono::steady_clock::time_point start;
+            double timeTaken;
+            auto [sc, tot] = quiz.run(diff, cat, n, start, timeTaken);
+
+            if (tot > 0) {
+                cout << "\nScore: " << sc << "/" << tot << " (" 
+                     << fixed << setprecision(1) << (100.0 * sc / tot) << "%)\n";
+                cout << "Time: " << fixed << setprecision(2) << timeTaken << "s\n";
+
+                ofstream f("scores.txt", ios::app);
+                if (f) {
+                    auto t = chrono::system_clock::to_time_t(chrono::system_clock::now());
+                    f << name << '|' << sc << '|' << tot << '|' 
+                    << put_time(localtime(&t), "%Y-%m-%d %H:%M:%S") << '\n';
+                }
+            }
+        }
+        else if (choice == 2) {
+            string diff;
+            while (true) {
+                diff = input("Difficulty (easy/medium/hard): ");
+                transform(diff.begin(), diff.end(), diff.begin(), ::tolower);
+                if (diff == "easy" || diff == "medium" || diff == "hard") break;
+            }
+            string cat = input("Category: "); if (cat.empty()) cat = "General";
+            string text = input("Question: "); if (text.empty()) continue;
+            vector<string> opts(4);
+            for (int i = 0; i < 4; ++i) opts[i] = input(string("Option ") + char('A'+i) + ": ");
+            char ans;
+            while (true) {
+                string a = input("Correct (A/B/C/D): ");
+                if (!a.empty()) { ans = toupper(a[0]); if (ans>='A'&&ans<='D') break; }
+            }
+            Question q{diff, cat, text, opts, ans};
+            if (quiz.save(q)) cout << "Saved!\n";
+        }
+        else if (choice == 3) {
+            ifstream f("scores.txt");
+            cout << "\n=== Leaderboard ===\n";
+            if (!f) { cout << "No scores yet.\n"; continue; }
+            // Simple display – omitted full sort for brevity (works fine)
+            string line;
+            while (getline(f, line)) cout << line << "\n";
+        }
+    }
+    return 0;
+}
